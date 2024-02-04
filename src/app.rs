@@ -1,6 +1,6 @@
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{prelude::*, style::palette::tailwind, widgets::*};
+use ratatui::{prelude::*, style::palette::tailwind};
 
 use crate::{
     events::{Event, EventHandler},
@@ -10,7 +10,7 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct App {
     mode: Mode,
-    tick_count: usize,
+    tick_counter: TickCounter,
 }
 
 /// Application mode.
@@ -21,12 +21,12 @@ pub struct App {
 enum Mode {
     /// The default mode.
     #[default]
-    Default,
+    Running,
 
     /// The application is paused.
     ///
     /// This is an example of how you might use the mode to control the flow of the application.
-    Pause,
+    Paused,
 
     /// The application is in the process of quitting.
     Quit,
@@ -36,7 +36,6 @@ enum Mode {
 enum Action {
     #[default]
     None,
-    ResetTicks,
     TogglePause,
     Exit,
 }
@@ -72,9 +71,8 @@ impl App {
             Event::Tick => self.tick(),
             Event::KeyPress(event) => match event.into() {
                 Action::Exit => self.quit(),
-                Action::ResetTicks => self.reset_ticks(),
                 Action::TogglePause => self.toggle_pause(),
-                Action::None => {}
+                Action::None => self.tick_counter.handle_event(event),
             },
             Event::Mouse(_event) => {}
             Event::Resize(_size) => {}
@@ -87,22 +85,17 @@ impl App {
     ///
     /// This is a good place to handle animations and other time-based events.
     pub fn tick(&mut self) {
-        if self.mode == Mode::Pause {
+        if self.mode == Mode::Paused {
             return;
         }
-        self.tick_count += 1;
-    }
-
-    /// Reset the tick count.
-    pub fn reset_ticks(&mut self) {
-        self.tick_count = 0;
+        self.tick_counter.tick();
     }
 
     /// Toggle pause.
     pub fn toggle_pause(&mut self) {
         self.mode = match self.mode {
-            Mode::Default => Mode::Pause,
-            Mode::Pause => Mode::Default,
+            Mode::Running => Mode::Paused,
+            Mode::Paused => Mode::Running,
             Mode::Quit => Mode::Quit,
         };
     }
@@ -119,7 +112,6 @@ impl From<KeyEvent> for Action {
         match key_event.code {
             Char('q') | Esc => Self::Exit,
             Char('c') if key_event.modifiers == KeyModifiers::CONTROL => Self::Exit,
-            Char('r') => Self::ResetTicks,
             Char(' ') => Self::TogglePause,
             // You can add more key handlers here.
             _ => Self::None,
@@ -140,11 +132,16 @@ impl Widget for &App {
         // header
         let header_fg = tailwind::SLATE.c300;
         let header_bg = tailwind::AMBER.c900;
+        let [left, right] = Layout::horizontal([Fill(1), Fill(1)]).areas(header);
         Line::from("Ratatui Template")
             .style((header_fg, header_bg, Modifier::BOLD))
-            .render(header, buf);
+            .render(left, buf);
+        Line::from(format!("Mode: {:?}", self.mode))
+            .right_aligned()
+            .style((header_fg, header_bg, Modifier::BOLD))
+            .render(right, buf);
 
-        Body::new("Hello, Ratatui!", self.tick_count).render(body, buf);
+        self.tick_counter.render(body, buf);
 
         // footer
         Line::from("Quit: q, Reset: r, Pause: Space")
@@ -154,23 +151,29 @@ impl Widget for &App {
 }
 
 /// A simple example to show how how to break up the UI into smaller widgets.
-struct Body {
-    text: &'static str,
+#[derive(Debug, Default)]
+struct TickCounter {
     tick_count: usize,
 }
 
-impl Body {
-    fn new(text: &'static str, tick_count: usize) -> Self {
-        Self { text, tick_count }
+impl TickCounter {
+    pub fn tick(&mut self) {
+        self.tick_count += 1;
+    }
+
+    pub fn handle_event(&mut self, event: KeyEvent) {
+        if event.code == KeyCode::Char('r') {
+            self.reset();
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.tick_count = 0;
     }
 }
 
-impl Widget for &Body {
+impl Widget for &TickCounter {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let line_count = self.text.lines().count() as u16;
-        let [text_area, tick_count_area] =
-            Layout::vertical([Constraint::Length(line_count), Constraint::Length(1)]).areas(area);
-        Paragraph::new(self.text).render(text_area, buf);
-        Line::from(format!("Ticks: {}", self.tick_count)).render(tick_count_area, buf);
+        Line::from(format!("Ticks: {}", self.tick_count)).render(area, buf);
     }
 }

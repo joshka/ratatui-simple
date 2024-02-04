@@ -80,13 +80,19 @@ pub const DEFAULT_TICK_RATE: Duration = Duration::from_millis(100);
 /// `DEFAULT_TICK_RATE`.
 fn spawn_tick_thread(tx: mpsc::Sender<Event>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut last_tick = Instant::now();
+        let mut previous_tick = Instant::now();
         loop {
-            let next_tick = last_tick + DEFAULT_TICK_RATE;
+            // try to make the period between ticks as close to `DEFAULT_TICK_RATE` as possible
+            // even if the tick event takes a long time to process
+            let next_tick = previous_tick + DEFAULT_TICK_RATE;
             thread::sleep(next_tick.saturating_duration_since(Instant::now()));
-            // ignore send errors as they just indicate that the app is shutting down
-            _ = tx.send(Event::Tick);
-            last_tick = next_tick;
+            previous_tick = next_tick;
+
+            if tx.send(Event::Tick).is_err() {
+                // send errors indicate that the receiver is not accepting events, which means the
+                // app is shutting down
+                break;
+            }
         }
     })
 }
@@ -101,12 +107,16 @@ fn spawn_event_handler_thread(tx: mpsc::Sender<Event>) -> thread::JoinHandle<()>
     thread::spawn(move || loop {
         if event::poll(Duration::from_millis(100)).expect("no events available") {
             let event = event::read().expect("unable to read event");
-            // ignore events that can't be converted
             match event.into() {
-                Event::Ignored => {}
+                Event::Ignored => {
+                    // ignore events that can't be converted
+                }
                 event => {
-                    // ignore send errors as they just indicate that the app is shutting down
-                    let _ = tx.send(event);
+                    if tx.send(event).is_err() {
+                        // send errors indicate that the receiver is not accepting events, which
+                        // means the app is shutting down
+                        break;
+                    }
                 }
             }
         }
