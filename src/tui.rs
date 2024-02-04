@@ -1,76 +1,70 @@
-use crate::app::{App, AppResult};
-use crate::event::EventHandler;
-use crate::ui;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::backend::Backend;
-use ratatui::Terminal;
-use std::io;
-use std::panic;
+use std::{
+    io::{stdout, Stdout},
+    ops::{Deref, DerefMut},
+};
 
-/// Representation of a terminal user interface.
+use color_eyre::Result;
+use crossterm::{execute, terminal::*};
+use ratatui::prelude::*;
+
+/// A guard wrapper around Terminal that restores the terminal properties when dropped.
 ///
-/// It is responsible for setting up the terminal,
-/// initializing the interface and handling the draw events.
+/// This ensures that the terminal does not get stuck in raw mode or the alternate screen if the
+/// application crashes.
 #[derive(Debug)]
-pub struct Tui<B: Backend> {
-    /// Interface to the Terminal.
-    terminal: Terminal<B>,
-    /// Terminal event handler.
-    pub events: EventHandler,
+pub struct TerminalGuard {
+    terminal: Terminal<CrosstermBackend<Stdout>>,
 }
 
-impl<B: Backend> Tui<B> {
-    /// Constructs a new instance of [`Tui`].
-    pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
-        Self { terminal, events }
+/// Pass-through implementations for the terminal.
+impl Deref for TerminalGuard {
+    type Target = Terminal<CrosstermBackend<Stdout>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.terminal
     }
+}
 
-    /// Initializes the terminal interface.
-    ///
-    /// It enables the raw mode and sets terminal properties.
-    pub fn init(&mut self) -> AppResult<()> {
-        terminal::enable_raw_mode()?;
-        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture)?;
-
-        // Define a custom panic hook to reset the terminal properties.
-        // This way, you won't have your terminal messed up if an unexpected error happens.
-        let panic_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |panic| {
-            Self::reset().expect("failed to reset the terminal");
-            panic_hook(panic);
-        }));
-
-        self.terminal.hide_cursor()?;
-        self.terminal.clear()?;
-        Ok(())
+/// Pass-through implementations for the terminal
+impl DerefMut for TerminalGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.terminal
     }
+}
 
-    /// [`Draw`] the terminal interface by [`rendering`] the widgets.
-    ///
-    /// [`Draw`]: ratatui::Terminal::draw
-    /// [`rendering`]: crate::ui:render
-    pub fn draw(&mut self, app: &mut App) -> AppResult<()> {
-        self.terminal.draw(|frame| ui::render(app, frame))?;
-        Ok(())
+/// Restore the terminal when the guard is dropped.
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore().unwrap();
     }
+}
 
-    /// Resets the terminal interface.
-    ///
-    /// This function is also used for the panic hook to revert
-    /// the terminal properties if unexpected errors occur.
-    fn reset() -> AppResult<()> {
-        terminal::disable_raw_mode()?;
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture)?;
-        Ok(())
-    }
+/// Initialize the terminal interface.
+///
+/// Returns a [`TerminalGuard`] that restores the terminal to its original state when dropped.
+///
+/// This enables [raw mode] and enters the [alternate screen].
+///
+/// [raw mode]: https://ratatui.rs/concepts/backends/raw-mode/
+/// [alternate screen]: https://ratatui.rs/concepts/backends/alternate-screen/
+pub fn init() -> Result<TerminalGuard> {
+    enable_raw_mode()?;
+    execute!(stdout(), EnterAlternateScreen)?;
 
-    /// Exits the terminal interface.
-    ///
-    /// It disables the raw mode and reverts back the terminal properties.
-    pub fn exit(&mut self) -> AppResult<()> {
-        Self::reset()?;
-        self.terminal.show_cursor()?;
-        Ok(())
-    }
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    terminal.hide_cursor()?;
+    terminal.clear()?;
+
+    Ok(TerminalGuard { terminal })
+}
+
+/// Restore the terminal interface.
+///
+/// This disables [raw mode] and leaves the [alternate screen].
+pub fn restore() -> Result<()> {
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen)?;
+    Ok(())
 }
