@@ -1,6 +1,8 @@
 pub mod app;
 pub mod errors;
 pub mod events;
+pub mod root;
+pub mod tick_counter;
 pub mod tui;
 
 use color_eyre::Result;
