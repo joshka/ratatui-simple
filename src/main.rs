@@ -1,5 +1,10 @@
+pub mod app;
+pub mod events;
+pub mod hooks;
+pub mod tui;
+
 use color_eyre::Result;
-use ratatui_simple::{app::App, events::EventHandler, hooks, tui};
+use {app::App, events::EventHandler};
 
 fn main() -> Result<()> {
     hooks::init()?;
